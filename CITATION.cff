@@ -1,0 +1,41 @@
+cff-version: 1.2.0
+message: "If you use PhageTAILor, please cite it using the metadata below."
+title: "PhageTAILor leverages machine learning for phage tail-like elements detection and classification in plant-associated bacteria"
+abstract: >-
+Phage tail‑like elements (PTEs) — prophages, tailocins, bacterial type VI secretion systems (T6SS), and extracellular contractile injection systems (eCIS) — are contractile nanomachines that bacteria use to deliver effectors and compete, and they help shape the composition of microbial communities. Tailocins, phage‑derived bacteriocins, are of particular interest as precision antimicrobials. However, computational detection of PTEs is fragmented across single‑class prediction tools, and the most reliable tailocin detection methods are largely restricted to Pseudomonas, leaving most bacterial diversity uncharacterized. We present PhageTAILor, a modular and fully automated pipeline that detects and classifies four PTE classes directly from bacterial genomes. PhageTAILor combines a six‑detector homology‑based candidate search (geNomad, tail‑gene, PHROGs‑tail, SecReT6, eCIStem, and a divergence‑tolerant tail‑HMM detector) with LightGBM classifier comprising one multiclass and three binary heads, trained on 6,501 curated bacterial genomes carrying 13,082 PTEs. A phylogeny‑free feature representation keeps predictions reproducible between model construction and user inference. PhageTAILor performs strongly at the genome level and generalizes beyond its Pseudomonas‑rich training set: on a 77‑strain cross‑clade benchmark it detected tailocins at F1 = 0.955, and it recovered 12 of 13 experimentally validated tailocins spanning six genera versus 2 of 13 for a Pseudomonas‑restricted tool, while matching standalone geNomad's sensitivity without its false‑positive rate. Applied to 7,925 plant‑ and soil‑associated bacterial isolates, PhageTAILor showed that tailocins and T6SS are enriched in plant‑associated bacteria whereas eCIS are enriched in soil. PhageTAILor is distributed as an open, modular pipeline with a command‑line interface.
+
+version: v0.1.0
+date-released: "2026-07-02"
+license: MIT
+type: software
+repository-code: "https://github.com/hjcho-bio/PhageTAILor_final"
+doi: 10.5281/zenodo.21152308
+authors:
+  - family-names: Cho
+    given-names: Heejung
+  - family-names: Hour
+    given-names: Socheata
+  - family-names: Roux
+    given-names: Simon
+  - family-names: Coclet
+    given-names: Clement
+  - family-names: Amusat
+    given-names: Oluwamayowa
+  - family-names: Mutalik
+    given-names: Vivek
+  - family-names: Kazakov
+    given-names: Alexey
+  - family-names: Levy
+    given-names: Asaf
+  - family-names: Nachmias
+    given-names: Nimrod
+  - family-names: Aureli
+    given-names: Lorenzo
+  - family-names: Sweet
+    given-names: Tyrome
+  - family-names: Visel
+    given-names: Axel
+  - family-names: Ceballos
+    given-names: Ruben
+  - family-names: Basso
+    given-names: Jonelle T. R.

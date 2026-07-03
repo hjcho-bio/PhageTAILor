@@ -1,0 +1,8 @@
+# Exact versions as used (conda env: msf, python 3.11.0)
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python=3.11.0
+  - macsyfinder=2.1.6
+  - hmmer=3.4

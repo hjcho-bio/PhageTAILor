@@ -1,0 +1,28 @@
+# Run artifacts (per-pipeline-run output dirs)
+/results/
+.snakemake/
+
+# Local test data (machine-specific absolute path lists)
+test_data/genome_paths.txt
+test_data/benchmark_paths.txt
+
+# Large reference data (regenerable; not in git)
+resources/training_sketch/sketch_db/
+resources/hmm_tail_db/
+resources/phrogs_db/
+
+# Archived / old model snapshots (keep only the deployed model)
+resources/model/archive_*/
+
+# Backups / disabled artifacts
+*.bak
+*.disabled_collapsed
+*_preupdate
+
+# Editor / OS
+.DS_Store
+__pycache__/
+*.pyc
+*.swp
+.idea/
+.vscode/

@@ -1,0 +1,619 @@
+#!/usr/bin/env python3
+"""PhageTAILor v0.1.0 — beginner-friendly command-line interface.
+
+Usage:
+    phagetailor run    <samples.tsv>  [--out DIR] [--cores N]
+    phagetailor check
+    phagetailor explain <step>
+    phagetailor example
+
+Input is a tab-separated `.tsv` file (or `.txt`, if tab-separated) with
+three columns:
+    sample_number    sample_name    sample_fasta_directory
+
+Run `phagetailor --help` for the full guide; or `phagetailor explain <step>`
+to learn what each part of the pipeline does in plain language.
+"""
+from __future__ import annotations
+import argparse, os, shutil, subprocess, sys, textwrap
+from pathlib import Path
+
+THIS_DIR = Path(__file__).resolve().parent
+WORKFLOW = THIS_DIR / "workflow" / "Snakefile"
+DEFAULT_OUT = Path.cwd() / "phagetailor_results"
+
+# ───────────────────────────────────────────────────────────────────────────
+# Per-step explanations (used by `phagetailor explain <step>`)
+# ───────────────────────────────────────────────────────────────────────────
+
+STEP_EXPLAIN = {
+    "annotation": """
+        ANNOTATION (gene calling) — what is it?
+
+        Your genome FASTA is a long string of A/T/G/C. The annotation step
+        identifies where the genes are: their start position, end position,
+        and the protein they encode. We use Pyrodigal-gv, a fast gene caller
+        that handles partial genes at the edges of contigs (common in
+        draft assemblies).
+
+        Input:  {sample}.fna
+        Output: {sample}.faa  (protein sequences)
+                {sample}.gff  (gene coordinates)
+
+        Why it matters:
+          Every downstream step works on proteins, not nucleotides. If gene
+          calling is wrong, the rest of the pipeline is wrong.
+
+        Roughly:  ~30 sec per 5 Mb bacterial genome on 1 core.
+    """,
+    "taxonomy": """
+        TAXONOMY (who is this organism?) — what is it?
+
+        Given your genome, the pipeline asks: "Which bacterial genus does
+        this belong to?" and "How similar is it to the genomes the model
+        was trained on?"
+
+        - GTDB-Tk assigns a phylum / class / order / family / genus / species.
+        - skani compares your genome to all 6,893 training genomes and
+          reports the highest ANI (Average Nucleotide Identity) to any.
+
+        Why it matters:
+          The model uses genus / family / order as features. The skani ANI
+          also produces a "confidence band" attached to every prediction:
+            high   = >= 95% ANI to a training genome — predictions trustworthy
+            medium = 90-95% ANI — same genus, different species
+            low    = <90% ANI — cross-genus extrapolation
+            no_match = no training genome aligns at >= 50% query coverage
+
+        Roughly:  ~1 min per genome on 8 cores (mostly GTDB-Tk).
+    """,
+    "phage": """
+        PHAGE CANDIDATES (geNomad) — what is it?
+
+        geNomad scans your genome for regions that look like phages. It
+        uses a database of phage marker proteins (gene products that are
+        almost exclusively found in viruses) and a ML model.
+
+        Input:  {sample}.fna
+        Output: {sample}_virus_summary.tsv  (one row per detected region)
+
+        Why it matters:
+          geNomad detects integrated prophages, lytic phages embedded in the
+          chromosome, AND some tailocins — making it the primary source of
+          phage / tailocin candidates for PhageTAILor.
+
+          PhageTAILor does NOT trust geNomad alone for tailocin detection
+          because some tailocins have lost the marker proteins geNomad
+          requires. Two additional detectors (PHROGS-tail and tail-gene)
+          catch those.
+
+        Slowest step in the pipeline.  ~1.5 min per 5 Mb genome on 8 cores.
+    """,
+    "t6ss": """
+        T6SS CANDIDATES (SecReT6 clusterer) — what is it?
+
+        The Type-VI Secretion System (T6SS) is a molecular weapon bacteria
+        use to inject toxins into neighboring cells. It has ~13 core
+        components (TssA through TssM) that cluster together in the genome.
+
+        We search your proteome against SecReT6 (a curated database of T6SS
+        component proteins) using MMseqs2, then look for places where
+        multiple components cluster within 15 kb of each other.
+
+        Input:  {sample}.faa
+        Output: {sample}/candidates.tsv  (one row per T6SS cluster)
+
+        Why it matters:
+          T6SS is independent of phage biology — geNomad would never find it.
+          The clusterer catches T6SS even when individual component hits are
+          weak, because it requires multiple components in close proximity.
+
+        Roughly:  ~30 sec per genome on 8 cores.
+    """,
+    "ecis": """
+        eCIS CANDIDATES (eCIStem clusterer) — what is it?
+
+        Extracellular Contractile Injection Systems (eCIS) are phage-tail-
+        derived nanomachines bacteria use to inject toxins into eukaryotic
+        cells (insects, amoebae, fungi). They are evolutionarily related to
+        tailocins and prophages but functionally distinct.
+
+        We search your proteome against eCIStem (13,769 proteins from 523
+        published eCIS-producer genomes) using MMseqs2, then cluster hits.
+
+        Input:  {sample}.faa
+        Output: {sample}/candidates.tsv  (one row per eCIS cluster)
+
+        Why it matters:
+          84 of the 523 eCIS-producer genomes in the training set carry
+          eCIS clusters that geNomad DOES NOT FLAG. Without this detector,
+          16% of all eCIS regions would be invisible to the pipeline.
+
+        Roughly:  ~30 sec per genome on 8 cores.
+    """,
+    "tailocin": """
+        TAILOCIN CANDIDATES (three geNomad-independent detectors) — what are they?
+
+        Tailocins are bacteriocin nanomachines: phage-tail-like structures
+        that lost the ability to package DNA, repurposed by their host
+        as targeted toxins. They look like phage tails but ARE NOT phages.
+
+        Because some tailocins have lost canonical phage markers, geNomad
+        misses them. We use THREE geNomad-independent detectors:
+
+        1. Tail-gene clusterer — MMseqs2 vs a curated database of 24,926
+           proteins extracted from training tailocin coordinates. Sequence-based,
+           fast, sensitive to anything resembling a training tailocin.
+
+        2. PHROGS-tail clusterer — MMseqs2 vs the PHROGS database, filtered
+           to the 1,238 PHROGs annotated as functional category "tail".
+           Broader sensitivity (catches divergent tail genes).
+
+        3. HMM-tail clusterer — HMMER vs the bundled 312-profile tail-cassette
+           HMM library (baseplate / sheath / tube / fibre / holin / lysin).
+           Profile matching tolerates sequence divergence that defeats MMseqs2,
+           so cross-clade tail loci (Aeromonas, Bacillus, Streptomyces, etc.)
+           still register as candidate regions.
+
+        Input:  {sample}.faa
+        Output: tailocin/tailgenes_candidates.tsv,
+                tailocin/phrog_tail_candidates.tsv
+
+        Why it matters:
+          Multi-detector redundancy. A tailocin that ANY of these four
+          detectors (geNomad provirus, tail-gene, PHROGS-tail, HMM-tail)
+          catches will reach the classifier as a candidate region.
+
+        Roughly:  ~1.5 min per genome on 8 cores (PHROGS + HMM are the slow ones).
+    """,
+    "hmm_tail": """
+        HMM-TAIL CANDIDATES (profile clusterer) — what is it?
+
+        The sequence-divergence-tolerant counterpart to the tail-gene and
+        PHROGS-tail detectors. Instead of MMseqs2 sequence search, it uses
+        HMMER profile search against the bundled 312-profile tail-cassette
+        HMM library (baseplate / sheath / tube / fibre / holin / lysin),
+        then clusters hits along each scaffold the same way the other
+        detectors do.
+
+        Input:  {sample}.faa
+        Output: {sample}/hmm_tail_candidates.tsv  (one row per HMM tail cluster)
+
+        Why it matters:
+          Profile matching tolerates the sequence divergence that defeats
+          MMseqs2, so cross-clade tail loci (Aeromonas, Bacillus,
+          Streptomyces, etc.) still register as candidate regions. This is
+          the primary mechanism for picking up tailocins outside the
+          Pseudomonas-rich training pool.
+
+        Roughly:  part of the ~1.5 min tail-detector block per genome on 8 cores.
+    """,
+    "features": """
+        FEATURE EXTRACTION — what is it?
+
+        Each candidate region is turned into a fixed-length 74-number
+        vector describing it. The vector includes:
+
+        - Geometric features: how long? how many genes? which detector?
+        - Cluster-level signals: how many T6SS components inside? how many
+          eCIS clusters? how many tail genes? how many PHROGs per functional
+          category (tail, head, lysis, etc.)?
+        - geNomad evidence: virus_score, n_hallmarks, marker_enrichment.
+
+        Plus genome-level HMM features. Phylogenetic-placement features
+        (genus, family, order, nearest ANI to the training pool) are
+        deliberately excluded from the deployed phylo-free model; nearest
+        ANI is computed only for the confidence band, not as a model input.
+
+        Output: features/features.parquet  (one row per candidate region)
+
+        Why it matters:
+          The classifier doesn't see the raw genome — it sees these 74
+          numbers per region. Designed for both interpretability ("this
+          region has 5 tail PHROGs and 3 baseplate components") and
+          discrimination (different feature distributions per PTE class).
+    """,
+    "classify": """
+        CLASSIFY (apply the trained model) — what is it?
+
+        The 74-feature vector for each candidate region is fed to FOUR
+        independent gradient-boosted models (LightGBM):
+
+        1. multiclass head — outputs a probability for each PTE class
+           (negative / tailocin / Phage / T6SS / eCIS). The class with the
+           highest probability is the prediction.
+
+        2. tailocin_binary — outputs the probability the region is a
+           tailocin specifically. Useful for tailocin-screening at a
+           calibrated threshold.
+
+        3. t6ss_binary — same idea for T6SS.
+
+        4. ecis_binary — same idea for eCIS.
+
+        Use the multiclass head to ask "what is this?" and the binary
+        heads to ask "is this a tailocin / T6SS / eCIS specifically?"
+        with class-specific operating points.
+
+        Output: classify/predictions.tsv (per-region scores)
+    """,
+    "report": """
+        REPORT — what is it?
+
+        The final step. Joins per-region predictions with the genome's
+        taxonomy and confidence band, computes per-genome aggregates (max
+        score per PTE class), and writes user-facing files:
+
+        - classify/predictions.tsv — per-region: every candidate region with
+            all scores. Useful for "where exactly in this genome is a tailocin?"
+        - report/per_genome_predictions.tsv — per-genome: one row per input
+            genome, max score across regions for each PTE class. Useful for
+            "which of my 500 genomes carry tailocins?"
+        - features/regions.bed — BED file of all candidate regions. Load in
+            IGV / JBrowse / UCSC to visualize.
+        - report/summary.html — Human-readable browser report.
+    """,
+    "input": """
+        INPUT FORMAT — `phagetailor run <samples.tsv>`
+
+        Input is a single tab-separated values file with three columns.
+        Preferred extension is `.tsv`; `.txt` is also accepted as long
+        as the file is tab-separated.
+
+            sample_number   sample_name   sample_fasta_directory
+
+        Column meanings:
+          * sample_number          — 1-based row index (1, 2, 3, …). Used
+                                      only as a stable user-facing label;
+                                      carried through to output tables.
+          * sample_name            — short identifier used in all output
+                                      file names and table rows (e.g.
+                                      GCF_000005845, strain42). Must be
+                                      unique within the file. Letters,
+                                      digits, underscores, and hyphens
+                                      only — no spaces or path separators.
+          * sample_fasta_directory — path to the genome FASTA, or to a
+                                      directory containing one .fna /
+                                      .fasta file (auto-detected).
+
+        Example (save as `samples.tsv`, tab-separated):
+
+            sample_number   sample_name   sample_fasta_directory
+            1               strain_A      /home/me/data/strain_A.fna
+            2               strain_B      /home/me/data/strain_B.fna
+            3               strain_C      /home/me/data/strain_C/
+
+        Then run:
+
+            phagetailor run ./samples.tsv --out my_results/ --cores 8
+
+        Notes
+        -----
+          - Save with TAB characters between columns. In Excel /
+            Google Sheets: File → Save As → "Tab-separated values".
+          - Both `.tsv` and `.txt` extensions are accepted; the file
+            contents (tab-separated, with the header below) are what
+            matters.
+          - The first row must be the header line shown above (column
+            order does not matter; case-insensitive).
+          - Lines starting with `#` are treated as comments and skipped.
+          - The pipeline creates symlinks in `<out>/_input_fnas/` named
+            `{sample_name}.fna` so user-supplied sample names are
+            preserved in all downstream files. The original FASTAs are
+            never modified.
+    """,
+}
+
+# ───────────────────────────────────────────────────────────────────────────
+# Helpers
+# ───────────────────────────────────────────────────────────────────────────
+
+def die(msg: str):
+    print(f"\n  ERROR: {msg}\n", file=sys.stderr)
+    print(f"  Run `phagetailor --help` or `phagetailor explain <step>` for help.\n", file=sys.stderr)
+    sys.exit(1)
+
+def warn(msg: str):
+    print(f"  WARNING: {msg}", file=sys.stderr)
+
+SAMPLE_NAME_RE = __import__("re").compile(r"^[A-Za-z0-9_.\-]+$")
+
+def _resolve_fasta(path: Path, line_num: int) -> Path | None:
+    """sample_fasta_directory can be a file or a directory. Return the FASTA path or None."""
+    if path.is_file():
+        return path
+    if path.is_dir():
+        fastas = sorted(list(path.glob("*.fna")) + list(path.glob("*.fasta")) + list(path.glob("*.fa")))
+        if not fastas:
+            warn(f"Line {line_num}: directory {path} contains no .fna/.fasta/.fa — skipping")
+            return None
+        if len(fastas) > 1:
+            warn(f"Line {line_num}: {path} contains {len(fastas)} FASTAs; using the first ({fastas[0].name})")
+        return fastas[0]
+    warn(f"Line {line_num}: path does not exist: {path} — skipping")
+    return None
+
+def discover_genomes(inp: Path):
+    """Parse the unified tab-separated input file.
+
+    Returns a list of (sample_number, sample_name, fna_path) tuples.
+
+    Required columns (case-insensitive, tab-separated header on first line):
+        sample_number    sample_name    sample_fasta_directory
+    """
+    if not inp.exists():
+        die(f"Input file does not exist: {inp}")
+    if inp.is_dir():
+        die(f"Input must be a tab-separated .txt file, not a directory: {inp}\n  Run `phagetailor explain input` for the required format.")
+
+    with open(inp) as fh:
+        header_line = fh.readline().rstrip("\n")
+        if not header_line:
+            die(f"Input file {inp} is empty. Run `phagetailor explain input`.")
+        if "\t" not in header_line:
+            die(f"Input must be TAB-separated. The header line of {inp} has no tabs.\n  Run `phagetailor explain input` for the required format.")
+        header = [c.strip().lower() for c in header_line.split("\t")]
+        required = ["sample_number", "sample_name", "sample_fasta_directory"]
+        missing = [c for c in required if c not in header]
+        if missing:
+            die(f"Input header is missing required column(s): {', '.join(missing)}.\n  Found columns: {', '.join(header)}\n  Run `phagetailor explain input` for the required format.")
+        i_num  = header.index("sample_number")
+        i_name = header.index("sample_name")
+        i_fa   = header.index("sample_fasta_directory")
+
+        triples = []
+        seen_names = set()
+        for line_num, raw in enumerate(fh, start=2):
+            line = raw.rstrip("\n")
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            cols = line.split("\t")
+            if len(cols) <= max(i_num, i_name, i_fa):
+                warn(f"Line {line_num}: fewer columns than the header — skipping")
+                continue
+            snum = cols[i_num].strip()
+            name = cols[i_name].strip()
+            fa_str = cols[i_fa].strip()
+            if not (snum and name and fa_str):
+                warn(f"Line {line_num}: empty sample_number / sample_name / sample_fasta_directory — skipping")
+                continue
+            if not SAMPLE_NAME_RE.match(name):
+                die(f"Line {line_num}: sample_name '{name}' contains illegal characters. Use letters, digits, '_', '.', '-' only (no spaces or path separators).")
+            if name in seen_names:
+                die(f"Line {line_num}: duplicate sample_name '{name}'. Each sample_name must be unique.")
+            seen_names.add(name)
+            fa = _resolve_fasta(Path(fa_str).expanduser(), line_num)
+            if fa is None:
+                continue
+            triples.append((snum, name, str(fa.resolve())))
+
+    if not triples:
+        die(f"No genomes resolved from {inp}. Run `phagetailor explain input` for the required format.")
+    return triples
+
+# ───────────────────────────────────────────────────────────────────────────
+# Command implementations
+# ───────────────────────────────────────────────────────────────────────────
+
+def cmd_run(args):
+    inp = Path(args.input).expanduser().resolve()
+    out = Path(args.out).expanduser().resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    print(f"\nPhageTAILor v0.1.0 — running on input: {inp}", flush=True)
+    triples = discover_genomes(inp)
+    print(f"  resolved {len(triples)} genome(s)", flush=True)
+
+    # Stage one symlink per sample, named {sample_name}.fna. This guarantees
+    # the sample_name supplied by the user is the name Snakemake derives
+    # from the FASTA basename, so all downstream tables key on user names.
+    stage = out / "_input_fnas"
+    stage.mkdir(parents=True, exist_ok=True)
+    paths_file = out / "_input_genomes.txt"
+    samples_file = out / "_samples.tsv"
+    with open(paths_file, "w") as pf, open(samples_file, "w") as sf:
+        sf.write("sample_number\tsample_name\tsample_fasta_directory\n")
+        for snum, name, fna in triples:
+            link = stage / f"{name}.fna"
+            if link.exists() or link.is_symlink():
+                link.unlink()
+            link.symlink_to(fna)
+            pf.write(f"{link}\n")
+            sf.write(f"{snum}\t{name}\t{fna}\n")
+
+    sm = shutil.which("snakemake")
+    if sm is None:
+        die("`snakemake` not found on PATH. Install it (e.g. `conda install -c bioconda snakemake`) and retry. You can also pass --skip-snakemake to dry-run.")
+    cfg = THIS_DIR / "config" / "config.yaml"
+    if not cfg.exists(): die(f"Bundled config not found at {cfg}. Did you clone the repo correctly?")
+
+    cmd = [sm,
+           "-s", str(WORKFLOW),
+           "--cores", str(args.cores),
+           "--configfile", str(cfg),
+           "--config", f"genome_list={paths_file}", f"output_dir={out}", f"modules={args.modules}",
+           "--rerun-incomplete",
+           "-p"]
+    if args.use_conda: cmd.append("--use-conda")
+
+    all_steps = ["annotation","taxonomy","phage","tailocin","t6ss","ecis","hmm_tail","features","classify","report"]
+    if args.modules == "all":
+        print("\nThe pipeline will run the following steps in order:\n")
+        for s in all_steps:
+            print(f"  • {s}")
+    else:
+        print(f"\nRunning selected modules: {args.modules}")
+        print("  (any prerequisite stages are added automatically)")
+    print("\nRun `phagetailor explain <step>` to learn what any step does.\n", flush=True)
+    if args.dry_run:
+        cmd.append("-n")
+        print("(dry-run mode — not actually running, just listing what would run)\n", flush=True)
+    print(f"  command: {' '.join(cmd)}\n", flush=True)
+    r = subprocess.run(cmd)
+    if r.returncode != 0:
+        die(f"snakemake exited with non-zero status {r.returncode}. See the log lines above. For help, run `phagetailor explain <step>` for the failing step.")
+    print(f"\n  DONE. Results in: {out}", flush=True)
+    mods = args.modules
+    runs_classifier = mods == "all" or any(m in mods.split(",") for m in ("report", "classify"))
+    if runs_classifier:
+        print(f"  - Open '{out}/report/summary.html' in a browser for a summary.", flush=True)
+        print(f"  - Or open '{out}/report/per_genome_predictions.tsv' in Excel for a per-genome table.\n", flush=True)
+    else:
+        print(f"  - Detector-only run ({mods}); see the per-detector candidate tables under '{out}/'", flush=True)
+        print(f"    (e.g. '{out}/phage/prophages.tsv' for geNomad prophages).\n", flush=True)
+
+def cmd_check(args):
+    print("\nChecking that PhageTAILor's required tools and databases are installed:\n")
+    tools = ["snakemake","pyrodigal-gv","genomad","mmseqs","hmmsearch","skani","gtdbtk"]
+    n_missing = 0
+    for t in tools:
+        path = shutil.which(t)
+        if path:
+            print(f"  [OK]    {t:<20} {path}")
+        else:
+            print(f"  [MISS]  {t:<20} (install via conda; see README)")
+            n_missing += 1
+    print()
+    for db, name, hint in [
+        ("resources/secret6_db/secret6_exp_db", "SecReT6 DB", ""),
+        ("resources/ecistem_db/ecistem_db", "eCIStem DB", ""),
+        ("resources/phrogs_db/phrogs_mmseqs_db/phrogs_profile_db_seq", "PHROGS DB",
+         "run: bash scripts/setup_databases.sh"),
+        ("resources/tailgenes_db/tailgenes_db", "tail-gene DB", ""),
+        ("resources/hmm_tail_db/hmm_tail_full.hmm", "tail-HMM library",
+         "run: bash scripts/setup_databases.sh"),
+        ("resources/hmm_tail_db/hmm_tail_detector.hmm", "tail-HMM detector subset",
+         "run: bash scripts/setup_databases.sh"),
+        ("resources/training_sketch/sketch_db", "training sketch",
+         "run: bash scripts/setup_databases.sh"),
+        ("resources/model/multiclass.txt", "LightGBM multiclass model", ""),
+    ]:
+        p = THIS_DIR / db
+        if p.exists():
+            print(f"  [OK]    {name:<26} {p}")
+        else:
+            extra = f"  ({hint})" if hint else ""
+            print(f"  [MISS]  {name:<26} expected at {p}{extra}")
+            n_missing += 1
+    print()
+    if n_missing == 0:
+        print("  All required components found. You are ready to run `phagetailor run`.\n")
+    else:
+        print(f"  {n_missing} missing component(s). See README for install instructions.\n")
+        sys.exit(1)
+
+def cmd_explain(args):
+    step = args.step.lower()
+    if step in ("all","list"):
+        print("\nAvailable steps (in pipeline order):\n")
+        for s in ["annotation","taxonomy","phage","tailocin","t6ss","ecis","hmm_tail","features","classify","report","input"]:
+            print(f"  phagetailor explain {s}")
+        print()
+        return
+    if step not in STEP_EXPLAIN:
+        die(f"Unknown step: {step}. Run `phagetailor explain list` to see options.")
+    print(textwrap.dedent(STEP_EXPLAIN[step]))
+
+def cmd_example(args):
+    print(textwrap.dedent("""
+        QUICK START — run PhageTAILor on one or more genomes
+
+        Step 1.  Create a tab-separated samples file (samples.tsv) with
+                 three columns. Open Excel or any text editor and enter:
+
+            sample_number   sample_name   sample_fasta_directory
+            1               strain_A      /home/me/data/strain_A.fna
+            2               strain_B      /home/me/data/strain_B.fna
+
+                 Save as "Tab-separated values" (.tsv preferred; .txt
+                 also works as long as it is tab-separated).
+
+        Step 2.  Run the pipeline:
+
+            phagetailor run samples.tsv --out my_results/ --cores 8
+
+        Step 3.  Look at the results:
+
+            firefox my_results/report/summary.html               # browser report
+            cat     my_results/report/per_genome_predictions.tsv  # per-genome summary
+            cat     my_results/classify/predictions.tsv           # per-region details
+            cat     my_results/features/regions.bed               # for IGV / JBrowse
+
+        That's it. The pipeline takes ~3 minutes per 5 Mb genome on 8 cores.
+
+        Need help with the input format?
+            phagetailor explain input
+
+        Need help understanding a step? Run:
+            phagetailor explain annotation
+            phagetailor explain tailocin
+            ... and so on.
+    """))
+
+# ───────────────────────────────────────────────────────────────────────────
+# argparse
+# ───────────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="phagetailor",
+        description=textwrap.dedent("""\
+        PhageTAILor v0.1.0 — find phage tail-like elements (tailocins,
+        prophages, T6SS, eCIS) in bacterial genomes.
+
+        Beginner-friendly usage:
+            phagetailor run samples.tsv  --out my_results/  --cores 8
+
+        Input is a tab-separated values file (`.tsv` preferred, `.txt`
+        also accepted) with three columns:
+            sample_number   sample_name   sample_fasta_directory
+
+        See `phagetailor example` for a guided quick start, or
+        `phagetailor explain input` for the input-file format, or
+        `phagetailor explain <step>` to learn what each pipeline step does.
+        """),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=textwrap.dedent("""\
+        Common commands:
+            phagetailor run <input>     run the pipeline on your genomes
+            phagetailor check           verify everything is installed
+            phagetailor explain <step>  explain a pipeline step in plain language
+            phagetailor example         show a guided quick-start example
+
+        Pipeline steps (run `phagetailor explain <step>` for details):
+            annotation taxonomy phage tailocin t6ss ecis hmm_tail features classify report
+        """)
+    )
+    sub = parser.add_subparsers(dest="cmd")
+
+    p_run = sub.add_parser("run", help="run the pipeline on your genomes",
+        description="Run PhageTAILor on a tab-separated samples file (.tsv or .txt). No YAML editing required. Run `phagetailor explain input` for the format.")
+    p_run.add_argument("input", help="tab-separated .tsv (or .txt) with columns: sample_number, sample_name, sample_fasta_directory (see `phagetailor explain input`)")
+    p_run.add_argument("--out", default=str(DEFAULT_OUT), help="output directory (default: ./phagetailor_results)")
+    p_run.add_argument("--cores", type=int, default=8, help="CPU cores to use (default: 8)")
+    p_run.add_argument("--modules", default="all",
+        help="comma-separated subset of pipeline stages to run (default: all). "
+             "Prerequisites are added automatically, e.g. `--modules phage` runs a "
+             "prophage-only scan. Stages: annotation, taxonomy, phage, tailocin, t6ss, ecis, "
+             "hmm_tail, features, classify, report.")
+    p_run.add_argument("--use-conda", action="store_true", help="use Snakemake's conda env management")
+    p_run.add_argument("--dry-run", action="store_true", help="show what would run without running it")
+    p_run.set_defaults(func=cmd_run)
+
+    p_check = sub.add_parser("check", help="verify all required tools and databases are installed")
+    p_check.set_defaults(func=cmd_check)
+
+    p_explain = sub.add_parser("explain", help="explain a pipeline step in plain language",
+        description="Get a beginner-friendly explanation of one step.")
+    p_explain.add_argument("step", help=f"one of: {', '.join(STEP_EXPLAIN.keys())}, list")
+    p_explain.set_defaults(func=cmd_explain)
+
+    p_example = sub.add_parser("example", help="show a guided quick-start example")
+    p_example.set_defaults(func=cmd_example)
+
+    args = parser.parse_args()
+    if not getattr(args, "cmd", None):
+        parser.print_help(); sys.exit(0)
+    args.func(args)
+
+if __name__ == "__main__":
+    main()

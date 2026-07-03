@@ -1,0 +1,73 @@
+# PhageTAILor pipeline config
+
+# ── Inputs ──────────────────────────────────────────────────────────────────
+genome_list: "test_data/genome_paths.txt"   # one .fna path per line
+output_dir:  "results"
+
+# ── Module selection ────────────────────────────────────────────────────────
+# "all" or comma-separated subset. Dependencies are resolved automatically, so
+# you only need to name the stage(s) you want; prerequisites are pulled in for you.
+#   annotation,taxonomy,phage,tailocin,t6ss,ecis,hmm_tail,features,classify,report
+# Examples (see README "Running only the steps you need"):
+#   modules: "phage"   -> prophages only (geNomad -> phage/prophages.tsv), no classifier
+#   modules: "t6ss"    -> T6SS candidate table only
+#   modules: "all"     -> full pipeline ending in the classifier + report
+modules: "all"
+
+# ── Resources ───────────────────────────────────────────────────────────────
+threads:
+  default:    4
+  pyrodigal:  8
+  mmseqs:     16
+  hmmer:      8
+  gtdbtk:     32
+  genomad:    16
+  macsyfinder: 8
+
+# ── Reference data ──────────────────────────────────────────────────────────
+secret6_proteins:  "resources/secret6_db/secret6_exp_proteins.faa"
+secret6_metadata:  "resources/secret6_db/secret6_exp_proteins.tsv"
+secret6_mmseqs_db: "resources/secret6_db/secret6_exp_db"
+
+# eCIStem MMseqs2 reference (eCIS candidate detection)
+ecistem_metadata:    "resources/ecistem_db/ecistem_survivors_proteins.tsv"
+ecistem_mmseqs_db:   "resources/ecistem_db/ecistem_db"
+
+# PHROGs sequence DB + annotation (phage-functional category features)
+phrogs_mmseqs_db:    "resources/phrogs_db/phrogs_mmseqs_db/phrogs_profile_db_seq"
+phrogs_annotation:   "resources/phrogs_db/phrog_annot_v4.tsv"
+
+# Tail-gene MMseqs2 reference (sequence-based tailocin candidate detection)
+tailgenes_mmseqs_db: "resources/tailgenes_db/tailgenes_db"
+
+# Tail-HMM library (HMM-based, sequence-divergence-tolerant tailocin detection).
+# `hmm_tail_db` is the 597-profile library used by hmmsearch and by the per-region
+# / genome-level HMM feature blocks; `hmm_tail_metadata` is the curated category
+# map (baseplate / sheath / tube / fibre / lysin / etc.). The HMM-tail clusterer
+# (rules/hmm_tail.smk) internally restricts to the 312-profile cassette-only detector
+# subset given by `hmm_tail_detector_metadata`.
+hmm_tail_db:                  "resources/hmm_tail_db/hmm_tail_full.hmm"
+hmm_tail_metadata:            "resources/hmm_tail_db/hmm_detector_tail.tsv"
+hmm_tail_full_metadata:       "resources/hmm_tail_db/hmm_full_tail.tsv"
+
+# External reference DBs — edit these to point at your local installs.
+# geNomad DB: `bash scripts/setup_genomad_db.sh /path/to/genomad_db`
+# GTDB-Tk / CheckM2 / CheckV: install per each tool's own documentation.
+checkm2_db:  "/path/to/CheckM2_database/uniref100.KO.1.dmnd"
+genomad_db:  "/path/to/genomad_db"
+checkv_db:   "/path/to/checkv-db-v1.5"
+gtdbtk_db:   "/path/to/gtdbtk_db"
+
+# Pretrained model artifacts (populated by the model-building stage)
+model_dir: "resources/model"
+
+# ── Module options ──────────────────────────────────────────────────────────
+genomad_relaxed: true
+mmseqs_evalue:   1e-3   # match training (search_all_dbs.sbatch used mmseqs default -e = 1e-3); 1e-5 was 100x stricter and shifted all detector features below the trained distribution (under-detection, worst for eCIS)
+hmmer_evalue:    1e-5
+candidate_flank_bp: 5000
+
+# Tailocin-specific tuning
+tailocin:
+  min_components: 4              # min tail-related gene cluster size to flag a region
+  exclude_capsid: true           # rule-based: regions with capsid hits are NOT tailocins

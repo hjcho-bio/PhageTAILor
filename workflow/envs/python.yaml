@@ -1,0 +1,16 @@
+# Exact versions as used (conda env: mvip, python 3.8.19).
+# The data-science stack was installed via pip in the as-run env; pinned here
+# under pip, so the exact versions resolve on python 3.8 (pyarrow 17 has no
+# python-3.8 conda-forge build).
+channels:
+  - conda-forge
+dependencies:
+  - python=3.8.19
+  - pip
+  - pip:
+    - numpy==1.24.4
+    - pandas==2.0.3
+    - scikit-learn==1.3.2
+    - lightgbm==3.3.5
+    - pyarrow==17.0.0
+    - jinja2==3.1.4

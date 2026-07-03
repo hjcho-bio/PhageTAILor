@@ -1,0 +1,83 @@
+"""PhageTAILor — predict prophages, tailocins, T6SSs, and eCISs from bacterial genomes."""
+from pathlib import Path
+configfile: "config/config.yaml"
+
+# ── Inputs ──────────────────────────────────────────────────────────────────
+genome_list = Path(config["genome_list"])
+GENOMES = {}
+with open(genome_list) as fh:
+    for line in fh:
+        path = line.strip()
+        if not path or path.startswith("#"): continue
+        gid = Path(path).stem
+        if gid.endswith("_genomic"): gid = gid[:-len("_genomic")]
+        GENOMES[gid] = path
+
+OUT = Path(config["output_dir"])
+SAMPLES = list(GENOMES.keys())
+
+# ── Module selection ────────────────────────────────────────────────────────
+ALL_MODULES = ["annotation","taxonomy","phage","tailocin","t6ss","ecis","hmm_tail","features","classify","report"]
+SELECTED = config.get("modules", "all")
+MODULES = set(ALL_MODULES) if SELECTED == "all" else set(SELECTED.split(",") if isinstance(SELECTED, str) else SELECTED)
+
+DEPS = {
+    # geNomad runs end-to-end on the raw .fna and needs no protein annotation,
+    # so the phage module is self-contained: `modules: phage` is a minimal,
+    # standalone prophage run. (tailocin/features list `annotation` themselves.)
+    "phage":     set(),
+    "tailocin":  {"annotation","phage"},
+    "t6ss":      {"annotation"},
+    "ecis":      {"annotation"},
+    "hmm_tail":  {"annotation"},
+    "features":  {"annotation","taxonomy","phage","tailocin","t6ss","ecis","hmm_tail"},
+    "classify":  {"features"},
+    "report":    {"classify"},
+}
+for m in list(MODULES):
+    MODULES |= DEPS.get(m, set())
+
+include: "rules/annotation.smk"
+include: "rules/taxonomy.smk"
+include: "rules/phage.smk"
+include: "rules/tailocin.smk"
+include: "rules/t6ss.smk"
+include: "rules/ecis.smk"
+include: "rules/hmm_tail.smk"
+include: "rules/features.smk"
+include: "rules/classify.smk"
+include: "rules/report.smk"
+
+def all_targets():
+    targets = []
+    if "annotation" in MODULES:
+        targets += expand(str(OUT/"annotation"/"{s}.faa"), s=SAMPLES)
+        targets += expand(str(OUT/"annotation"/"{s}.secret6.m8"), s=SAMPLES)
+        targets += expand(str(OUT/"annotation"/"{s}.ecistem.m8"), s=SAMPLES)
+        targets += expand(str(OUT/"annotation"/"{s}.phrogs.m8"), s=SAMPLES)
+        targets += expand(str(OUT/"annotation"/"{s}.tailgenes.m8"), s=SAMPLES)
+        targets += expand(str(OUT/"annotation"/"{s}.hmmtail.tbl"), s=SAMPLES)
+    if "taxonomy"   in MODULES: targets.append(str(OUT/"taxonomy"/"nearest_train_ani.tsv"))
+    if "phage"      in MODULES:
+        targets += expand(str(OUT/"phage"/"{s}"/"_done"), s=SAMPLES)
+        targets.append(str(OUT/"phage"/"prophages.tsv"))                       # Tier 1: documented geNomad prophage table
+    if "tailocin"   in MODULES:
+        targets += expand(str(OUT/"tailocin"/"{s}"/"_done"), s=SAMPLES)
+        targets.append(str(OUT/"tailocin"/"tailgenes_candidates.tsv"))         # Tier 2
+        targets.append(str(OUT/"tailocin"/"phrog_tail_candidates.tsv"))        # Tier 2
+    if "t6ss"       in MODULES:
+        targets += expand(str(OUT/"t6ss"/"{s}"/"_done"), s=SAMPLES)
+        targets.append(str(OUT/"t6ss"/"t6ss_candidates.tsv"))                  # Tier 2: run-level detector table
+    if "ecis"       in MODULES:
+        targets += expand(str(OUT/"ecis"/"{s}"/"_done"), s=SAMPLES)
+        targets.append(str(OUT/"ecis"/"ecis_candidates.tsv"))                  # Tier 2
+    if "hmm_tail"   in MODULES:
+        targets += expand(str(OUT/"hmm_tail"/"{s}"/"_done"), s=SAMPLES)
+        targets.append(str(OUT/"hmm_tail"/"hmm_tail_candidates.tsv"))          # Tier 2
+    if "features"   in MODULES: targets.append(str(OUT/"features"/"features.parquet"))
+    if "classify"   in MODULES: targets.append(str(OUT/"classify"/"predictions.tsv"))
+    if "report"     in MODULES: targets.append(str(OUT/"report"/"summary.html"))
+    return targets
+
+rule all:
+    input: all_targets()

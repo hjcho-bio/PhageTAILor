@@ -1,0 +1,9 @@
+# Exact versions as used (conda env: gtdbtk, python 3.13.13)
+# skani is supplied by this env and is used for the training-sketch ANI band.
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python=3.13.13
+  - gtdbtk=2.6.1
+  - skani=0.3.1

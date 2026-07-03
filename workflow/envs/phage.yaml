@@ -1,0 +1,8 @@
+# Exact versions as used (conda env: mvip, python 3.8.19)
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python=3.8.19
+  - genomad=1.7.4
+  - checkv=1.0.3
