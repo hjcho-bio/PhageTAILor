@@ -244,7 +244,17 @@ downloads, checksums, and reassembles for you. The smaller detector DBs
 (SecReT6, tail-gene, eCIStem) ship in this repo.
 
 Downloads are resumable and every file is md5-verified, so an interrupted
-`setup_databases.sh` can simply be re-run.
+`setup_databases.sh` can simply be re-run -- completed files are skipped.
+
+Budget time for step 4: Zenodo typically serves at 0.5-1 MB/s, so the two
+reference DBs take ~5 minutes and the training sketch ~1-2 hours. Run it in a
+`tmux`/`screen` session, or fetch them separately:
+
+```bash
+bash scripts/setup_databases.sh reference   # ~200 MB, quick
+bash scripts/setup_databases.sh sketch      # ~2.9 GB, slow -- needed only for
+                                            # the nearest_other_ani confidence band
+```
 
 The training sketch powers the confidence band (`nearest_other_ani`); you do
 **not** need the 6,501 training genomes to run PhageTAILor. Their accessions are
