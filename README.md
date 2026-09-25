@@ -23,7 +23,7 @@ my_genomes/
 ### Step 2 — run
 
 ```bash
-phagetailor run my_genomes/  --out my_results/  --cores 8
+./phagetailor run my_genomes/  --out my_results/  --cores 8
 ```
 
 That is it. The pipeline will run the nine steps (gene calling → taxonomy →
@@ -185,30 +185,66 @@ candidates pending experimental follow-up.
 
 ## Installing
 
-```bash
-# 1. clone the repo
-git clone https://github.com/hjcho-bio/PhageTAILor_final.git
-cd PhageTAILor_final
+### Requirements
 
-# 2. create the conda environment
-conda env create -f workflow/envs/python.yaml -n phagetailor
+- **Linux (x86-64).** GTDB-Tk has no macOS conda build, so the taxonomy step
+  cannot run natively on a Mac. On Apple Silicon use a Linux container or a
+  remote Linux host. Everything else in the pipeline is cross-platform.
+- **conda** (miniforge/mambaforge recommended) and ~15 GB of free disk for the
+  reference databases.
+
+### Steps
+
+```bash
+# 1. clone
+git clone https://github.com/hjcho-bio/PhageTAILor.git
+cd PhageTAILor
+
+# 2. create the launcher environment -- Snakemake and nothing else
+conda create -n phagetailor -c conda-forge -c bioconda snakemake
 conda activate phagetailor
 
-# 3. download the geNomad reference DB (one-time, ~5 GB)
+# 3. geNomad reference DB (one-time, ~5 GB)
 bash scripts/setup_genomad_db.sh
 
-# 4. download the PhageTAILor reference DBs — tail-HMM, PHROGS, and the
-#    training sketch (~3.2 GB total, hosted on Zenodo)
+# 4. PhageTAILor reference DBs -- tail-HMM, PHROGS, training sketch
+#    (~3.1 GB total, hosted on Zenodo)
 bash scripts/setup_databases.sh
 
-# 5. verify everything is installed
+# 5. verify
 ./phagetailor check
 ```
 
-Reference data is distributed outside git because of its size: the geNomad DB is
-fetched from geNomad, and the PhageTAILor DBs (tail-HMM library, PHROGS DB, and
-training sketch) are hosted on Zenodo and fetched by `setup_databases.sh`. The
-smaller detector DBs (SecReT6, tail-gene, eCIStem) ship in this repo.
+### About the conda environments
+
+**You never create or activate the environments in `workflow/envs/`.**
+
+PhageTAILor uses five *per-rule* environments (`annotation`, `gtdbtk`,
+`macsyfinder`, `phage`, `python`). Snakemake builds each one automatically on
+first run and activates it only for the rules that need it. This is why they
+pin different Python versions (3.8, 3.11, 3.13) without conflicting: they never
+coexist in a single process. geNomad runs inside the 3.8 `phage` env, GTDB-Tk
+inside the 3.13 `gtdbtk` env, one after the other.
+
+The only environment you create by hand is the Snakemake launcher in step 2.
+`--use-conda` is on by default; pass `--no-use-conda` only if you are managing
+every tool yourself.
+
+The first run spends several minutes building those environments. Subsequent
+runs reuse them.
+
+### Reference data
+
+Reference data is distributed outside git because of its size. The geNomad DB is
+fetched from the geNomad authors' Zenodo record; the PhageTAILor DBs (tail-HMM
+library, PHROGS DB, training sketch) come from
+[doi:10.5281/zenodo.21152308](https://doi.org/10.5281/zenodo.21152308). The
+training sketch is published as six ~500 MB parts that `setup_databases.sh`
+downloads, checksums, and reassembles for you. The smaller detector DBs
+(SecReT6, tail-gene, eCIStem) ship in this repo.
+
+Downloads are resumable and every file is md5-verified, so an interrupted
+`setup_databases.sh` can simply be re-run.
 
 The training sketch powers the confidence band (`nearest_other_ani`); you do
 **not** need the 6,501 training genomes to run PhageTAILor. Their accessions are

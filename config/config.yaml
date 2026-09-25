@@ -53,10 +53,14 @@ hmm_tail_full_metadata:       "resources/hmm_tail_db/hmm_full_tail.tsv"
 # External reference DBs — edit these to point at your local installs.
 # geNomad DB: `bash scripts/setup_genomad_db.sh /path/to/genomad_db`
 # GTDB-Tk / CheckM2 / CheckV: install per each tool's own documentation.
-checkm2_db:  "/path/to/CheckM2_database/uniref100.KO.1.dmnd"
-genomad_db:  "/path/to/genomad_db"
-checkv_db:   "/path/to/checkv-db-v1.5"
-gtdbtk_db:   "/path/to/gtdbtk_db"
+# Leave as null until installed. Rules that need them fail fast with a message
+# naming the setup step, instead of dying deep inside a tool invocation.
+#   genomad_db -> bash scripts/setup_genomad_db.sh   (sets this line for you)
+#   gtdbtk_db / checkv_db / checkm2_db -> install per each tool's own docs
+checkm2_db:  null
+genomad_db:  null
+checkv_db:   null
+gtdbtk_db:   null
 
 # Pretrained model artifacts (populated by the model-building stage)
 model_dir: "resources/model"

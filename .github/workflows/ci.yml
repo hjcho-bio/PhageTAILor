@@ -1,0 +1,65 @@
+name: smoke
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Files that must exist with the right names
+        run: |
+          test -f phagetailor           || { echo "::error::phagetailor missing (is it still phagetailor.txt?)"; exit 1; }
+          test -x phagetailor           || { echo "::error::phagetailor is not executable"; exit 1; }
+          test -f workflow/Snakefile    || { echo "::error::workflow/Snakefile missing (is it still Snakefile.txt?)"; exit 1; }
+          for e in annotation gtdbtk macsyfinder phage python; do
+            test -f "workflow/envs/$e.yaml" || { echo "::error::workflow/envs/$e.yaml missing"; exit 1; }
+          done
+
+      - name: Shell scripts parse
+        run: for f in scripts/*.sh; do bash -n "$f" || exit 1; done
+
+      - name: CLI imports and responds
+        run: |
+          python3 -c "import ast; ast.parse(open('phagetailor').read())"
+          ./phagetailor --help > /dev/null
+
+      - name: Every URL in the README and setup scripts resolves
+        run: |
+          fail=0
+          urls=$(grep -rhoE 'https://[a-zA-Z0-9./_-]+' README.md scripts/*.sh \
+                 | sed 's/[.,)]*$//' | sort -u)
+          for u in $urls; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -L --max-time 25 "$u" || echo 000)
+            case "$code" in
+              2*|3*) echo "ok   $code  $u" ;;
+              *)     echo "DEAD $code  $u"; fail=1 ;;
+            esac
+          done
+          exit $fail
+
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          channels: conda-forge,bioconda
+          channel-priority: strict
+
+      - name: Launcher env is snakemake only
+        shell: bash -el {0}
+        run: conda install -y -c conda-forge -c bioconda snakemake-minimal
+
+      - name: Snakemake parses the workflow
+        shell: bash -el {0}
+        run: snakemake -s workflow/Snakefile --configfile config/config.yaml --list
+
+      - name: Per-rule conda envs solve
+        shell: bash -el {0}
+        run: |
+          for e in workflow/envs/*.yaml; do
+            echo "== $e"
+            conda env create -n "probe-$(basename "$e" .yaml)" -f "$e" --dry-run
+          done

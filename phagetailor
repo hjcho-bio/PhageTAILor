@@ -463,16 +463,21 @@ def cmd_run(args):
 
 def cmd_check(args):
     print("\nChecking that PhageTAILor's required tools and databases are installed:\n")
-    tools = ["snakemake","pyrodigal-gv","genomad","mmseqs","hmmsearch","skani","gtdbtk"]
     n_missing = 0
-    for t in tools:
-        path = shutil.which(t)
-        if path:
-            print(f"  [OK]    {t:<20} {path}")
-        else:
-            print(f"  [MISS]  {t:<20} (install via conda; see README)")
-            n_missing += 1
+    # Only snakemake must be on PATH. Every other tool (geNomad, GTDB-Tk, MMseqs2,
+    # HMMER, skani, Pyrodigal-gv) lives in a per-rule conda env that Snakemake
+    # creates automatically under --use-conda. Probing PATH for them is wrong:
+    # they are intentionally NOT in the launcher environment.
+    sm = shutil.which("snakemake")
+    if sm:
+        print(f"  [OK]    {'snakemake':<20} {sm}")
+    else:
+        print(f"  [MISS]  {'snakemake':<20} conda create -n phagetailor -c conda-forge -c bioconda snakemake")
+        n_missing += 1
     print()
+    print("  Pipeline tools (geNomad, GTDB-Tk, MMseqs2, HMMER, skani, Pyrodigal-gv)")
+    print("  are provided by per-rule conda environments that Snakemake builds on")
+    print("  first run. You do not create or activate them yourself.\n")
     for db, name, hint in [
         ("resources/secret6_db/secret6_exp_db", "SecReT6 DB", ""),
         ("resources/ecistem_db/ecistem_db", "eCIStem DB", ""),
@@ -595,7 +600,11 @@ def main():
              "Prerequisites are added automatically, e.g. `--modules phage` runs a "
              "prophage-only scan. Stages: annotation, taxonomy, phage, tailocin, t6ss, ecis, "
              "hmm_tail, features, classify, report.")
-    p_run.add_argument("--use-conda", action="store_true", help="use Snakemake's conda env management")
+    p_run.add_argument("--use-conda", dest="use_conda", action="store_true", default=True,
+                       help="let Snakemake build the per-rule conda envs (default: ON). "
+                            "You do not need to create or activate these yourself.")
+    p_run.add_argument("--no-use-conda", dest="use_conda", action="store_false",
+                       help="do not use conda envs; requires every tool already on PATH")
     p_run.add_argument("--dry-run", action="store_true", help="show what would run without running it")
     p_run.set_defaults(func=cmd_run)
 

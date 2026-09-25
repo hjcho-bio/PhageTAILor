@@ -2,6 +2,25 @@
 from pathlib import Path
 configfile: "config/config.yaml"
 
+# ── External database checks ────────────────────────────────────────────────
+# These point at third-party databases the user installs separately. Validate
+# them up front with an actionable message, rather than letting a rule fail
+# hundreds of lines into a run with "None is not a directory".
+def _require_db(key, what, hint):
+    val = config.get(key)
+    if not val or str(val).startswith("/path/to"):
+        raise WorkflowError(
+            f"config key '{key}' is not set, so {what} cannot run.\n"
+            f"  Fix: {hint}\n"
+            f"  Then re-run. Set it in config/config.yaml or pass --config {key}=/path/to/db"
+        )
+    if not Path(val).exists():
+        raise WorkflowError(
+            f"config key '{key}' points at a path that does not exist:\n"
+            f"    {val}\n"
+            f"  Fix: {hint}"
+        )
+
 # ── Inputs ──────────────────────────────────────────────────────────────────
 genome_list = Path(config["genome_list"])
 GENOMES = {}
@@ -18,6 +37,15 @@ SAMPLES = list(GENOMES.keys())
 
 # ── Module selection ────────────────────────────────────────────────────────
 ALL_MODULES = ["annotation","taxonomy","phage","tailocin","t6ss","ecis","hmm_tail","features","classify","report"]
+
+def _validate_selected_dbs(active):
+    if "phage" in active or "tailocin" in active:
+        _require_db("genomad_db", "the geNomad prophage detector",
+                    "bash scripts/setup_genomad_db.sh")
+    if "taxonomy" in active:
+        _require_db("gtdbtk_db", "GTDB-Tk taxonomic classification",
+                    "install the GTDB-Tk reference data and set gtdbtk_db in config/config.yaml")
+
 SELECTED = config.get("modules", "all")
 MODULES = set(ALL_MODULES) if SELECTED == "all" else set(SELECTED.split(",") if isinstance(SELECTED, str) else SELECTED)
 
@@ -36,6 +64,9 @@ DEPS = {
 }
 for m in list(MODULES):
     MODULES |= DEPS.get(m, set())
+
+# Fail fast on missing third-party databases for the modules actually selected.
+_validate_selected_dbs(MODULES)
 
 include: "rules/annotation.smk"
 include: "rules/taxonomy.smk"
