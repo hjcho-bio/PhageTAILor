@@ -1,7 +1,7 @@
 # Exact versions as used (conda env: msf, python 3.11.0)
 channels:
+  - conda-forge   # must precede bioconda (bioconda's documented order)
   - bioconda
-  - conda-forge
 dependencies:
   - python=3.11.0
   - macsyfinder=2.1.6
