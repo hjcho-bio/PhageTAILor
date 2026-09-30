@@ -23,6 +23,15 @@ def _require_db(key, what, hint):
 
 # ── Inputs ──────────────────────────────────────────────────────────────────
 genome_list = Path(config["genome_list"])
+if not genome_list.exists():
+    raise WorkflowError(
+        f"genome list not found: {genome_list}\n"
+        f"  This is the list of input genomes, one .fna path per line.\n"
+        f"  Fix: run the pipeline through the CLI, which writes it for you --\n"
+        f"         ./phagetailor run my_genomes/ --out my_results/ --cores 8\n"
+        f"       or point Snakemake at your own list:\n"
+        f"         --config genome_list=/path/to/genome_paths.txt"
+    )
 GENOMES = {}
 with open(genome_list) as fh:
     for line in fh:

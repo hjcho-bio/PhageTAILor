@@ -60,7 +60,40 @@ jobs:
 
       - name: Snakemake parses the workflow
         shell: bash -el {0}
-        run: snakemake -s workflow/Snakefile --configfile config/config.yaml --list
+        run: |
+          # Minimal fixture: parsing only needs a readable genome list, not real
+          # sequence. Kept out of the repo so no fake genome ships to users.
+          mkdir -p /tmp/fx /tmp/fx/genomad_db /tmp/fx/gtdbtk_db
+          printf '>contig_1\nATGAAACGCATTAGCACCACCATTACCACCACCATCACCATTACCACAGGT\n' > /tmp/fx/sample.fna
+          echo /tmp/fx/sample.fna > /tmp/fx/genome_paths.txt
+          # Stub DB dirs satisfy the fail-fast existence check; parsing never reads them.
+          snakemake -s workflow/Snakefile --configfile config/config.yaml \
+            --config genome_list=/tmp/fx/genome_paths.txt output_dir=/tmp/fx/out \
+                     genomad_db=/tmp/fx/genomad_db gtdbtk_db=/tmp/fx/gtdbtk_db \
+            --list
+
+      - name: Unset database gives an actionable error, not a traceback
+        shell: bash -el {0}
+        run: |
+          out=$(snakemake -s workflow/Snakefile --configfile config/config.yaml \
+                  --config genome_list=/tmp/fx/genome_paths.txt output_dir=/tmp/fx/out \
+                  --list 2>&1 || true)
+          echo "$out" | head -5
+          echo "$out" | grep -q "setup_genomad_db.sh" \
+            || { echo "::error::expected the setup hint"; exit 1; }
+          echo "ok: actionable error"
+
+      - name: Missing genome list gives an actionable error, not a traceback
+        shell: bash -el {0}
+        run: |
+          out=$(snakemake -s workflow/Snakefile --configfile config/config.yaml \
+                  --config genome_list=/tmp/does_not_exist.txt --list 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q "genome list not found" \
+            || { echo "::error::expected a friendly WorkflowError"; exit 1; }
+          echo "$out" | grep -q "Traceback" \
+            && { echo "::error::leaked a Python traceback"; exit 1; }
+          echo "ok: actionable error"
 
       - name: Per-rule conda envs solve
         shell: bash -el {0}
