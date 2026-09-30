@@ -58,7 +58,7 @@ hmm_tail_full_metadata:       "resources/hmm_tail_db/hmm_full_tail.tsv"
 #   genomad_db -> bash scripts/setup_genomad_db.sh   (sets this line for you)
 #   gtdbtk_db / checkv_db / checkm2_db -> install per each tool's own docs
 checkm2_db:  null
-genomad_db:  null
+genomad_db:  "/Users/heekyung/Downloads/PhageTAILor/resources/genomad_db"
 checkv_db:   null
 gtdbtk_db:   null
 
@@ -74,4 +74,4 @@ candidate_flank_bp: 5000
 # Tailocin-specific tuning
 tailocin:
   min_components: 4              # min tail-related gene cluster size to flag a region
-  exclude_capsid: true           # rule-based: regions with capsid hits are NOT tailocins
+  exclude_capsid: true           # rule-based: regions with capsid hits are NOT tailocinsuse_gtdbtk: false   # GTDB-Tk classification is optional; the ANI band uses skani

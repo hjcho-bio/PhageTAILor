@@ -16,7 +16,7 @@ rule nearest_train_ani:
     output:
         tsv = OUT/"taxonomy"/"nearest_train_ani.tsv",
     threads: config["threads"]["gtdbtk"]
-    conda: "../envs/gtdbtk.yaml"
+    conda: "../envs/skani.yaml"
     params:
         sketch = "resources/training_sketch/sketch_db",
     shell:

@@ -1,0 +1,13 @@
+# skani only, for the nearest_other_ani confidence band.
+#
+# Split out of gtdbtk.yaml deliberately: the deployed model is phylo-free, so
+# nothing downstream consumes GTDB-Tk's classification -- features_assemble
+# reads only taxonomy/nearest_train_ani.tsv, which skani produces. Bundling
+# skani with GTDB-Tk made the classifier unreachable on macOS, where GTDB-Tk
+# cannot be installed at all (pplacer has no macOS build).
+channels:
+  - conda-forge   # must precede bioconda (bioconda's documented order)
+  - bioconda
+dependencies:
+  - python=3.11
+  - skani=0.3.1

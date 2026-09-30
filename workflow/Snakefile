@@ -51,7 +51,11 @@ def _validate_selected_dbs(active):
     if "phage" in active or "tailocin" in active:
         _require_db("genomad_db", "the geNomad prophage detector",
                     "bash scripts/setup_genomad_db.sh")
-    if "taxonomy" in active:
+    # The taxonomy module's default target is the skani ANI band, which needs no
+    # GTDB-Tk. Only demand gtdbtk_db when GTDB-Tk classification is explicitly
+    # requested -- otherwise macOS users, where GTDB-Tk cannot be installed at
+    # all, are locked out of the classifier for no reason.
+    if "taxonomy" in active and config.get("use_gtdbtk", False):
         _require_db("gtdbtk_db", "GTDB-Tk taxonomic classification",
                     "install the GTDB-Tk reference data and set gtdbtk_db in config/config.yaml")
 

@@ -32,7 +32,9 @@ else
         echo "  Install conda (miniforge), or install geNomad yourself and re-run." >&2
         exit 1
     fi
-    TMP_ENV="${DIR}/.genomad_dl_env"
+    # Outside the repo: a conda env inside the working tree pollutes git status
+    # and is large enough to be slow to stat.
+    TMP_ENV="${TMPDIR:-/tmp}/phagetailor_genomad_dl_env"
     if [ ! -x "${TMP_ENV}/bin/genomad" ]; then
         echo "Building a temporary env to obtain geNomad (from ${ENV_FILE}) ..."
         "$CONDA_EXE_BIN" env create -p "$TMP_ENV" -f "$ENV_FILE" -y >/dev/null

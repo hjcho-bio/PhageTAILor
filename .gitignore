@@ -10,6 +10,7 @@ test_data/benchmark_paths.txt
 resources/training_sketch/sketch_db/
 resources/hmm_tail_db/
 resources/phrogs_db/
+resources/genomad_db/
 
 # Archived / old model snapshots (keep only the deployed model)
 resources/model/archive_*/
@@ -26,3 +27,6 @@ __pycache__/
 *.swp
 .idea/
 .vscode/
+
+# stray temp env from older setup_genomad_db.sh runs
+.genomad_dl_env/
