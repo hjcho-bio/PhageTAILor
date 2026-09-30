@@ -344,7 +344,29 @@ def discover_genomes(inp: Path):
     if not inp.exists():
         die(f"Input file does not exist: {inp}")
     if inp.is_dir():
-        die(f"Input must be a tab-separated .txt file, not a directory: {inp}\n  Run `phagetailor explain input` for the required format.")
+        # A folder of FASTAs is the documented Quick Start form:
+        #     phagetailor run my_genomes/ --out my_results/
+        fastas = sorted(
+            list(inp.glob("*.fna")) + list(inp.glob("*.fasta")) + list(inp.glob("*.fa"))
+        )
+        if not fastas:
+            die(f"No .fna/.fasta/.fa files found in directory: {inp}\n"
+                f"  Put your genome FASTAs there, or pass a tab-separated sample sheet.\n"
+                f"  Run `phagetailor explain input` for all accepted formats.")
+        triples = []
+        for i, f in enumerate(fastas, start=1):
+            name = f.stem
+            if name.endswith("_genomic"): name = name[: -len("_genomic")]
+            if not SAMPLE_NAME_RE.match(name):
+                warn(f"{f.name}: sample name {name!r} has unsupported characters — skipping")
+                continue
+            triples.append((i, name, f.resolve()))
+        if not triples:
+            die(f"No usable FASTA files in {inp} (all names rejected).")
+        print(f"  Found {len(triples)} genome(s) in {inp}:", flush=True)
+        for _, name, f in triples:
+            print(f"    - {name}  ({f.name})", flush=True)
+        return triples
 
     with open(inp) as fh:
         header_line = fh.readline().rstrip("\n")
