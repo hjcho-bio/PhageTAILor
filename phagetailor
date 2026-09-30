@@ -534,11 +534,60 @@ def cmd_check(args):
             print(f"  [MISS]  {name:<26} expected at {p}{extra}")
             n_missing += 1
     print()
+    _warn_shadowed_tools()
+
     if n_missing == 0:
         print("  All required components found. You are ready to run `phagetailor run`.\n")
     else:
         print(f"  {n_missing} missing component(s). See README for install instructions.\n")
         sys.exit(1)
+
+# Tools the per-rule conda envs provide. If one of these is also on the user's
+# PATH from somewhere else, a shell profile that prepends its directory can win
+# over Snakemake's env activation -- so the rule silently runs the wrong build.
+# A stale copy that macOS refuses to execute shows up as a killed job; a stale
+# copy that *does* run is worse, because results look fine but do not match the
+# pinned versions.
+_ENV_TOOLS = ["hmmsearch", "hmmscan", "mmseqs", "skani", "genomad",
+              "pyrodigal-gv", "pyrodigal", "checkv", "aragorn"]
+
+def _warn_shadowed_tools():
+    shadowed = []
+    for t in _ENV_TOOLS:
+        path = shutil.which(t)
+        if not path:
+            continue
+        if ".snakemake/conda" in path or "/envs/" in path:
+            continue                      # already a conda-managed copy
+        runs = True
+        try:
+            rc = subprocess.run([path, "-h"], stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, timeout=20).returncode
+            # subprocess reports a signal as a negative returncode (-9 = SIGKILL);
+            # a shell would show the same event as 128+9 = 137.
+            runs = rc not in (-9, 137)
+        except Exception:
+            pass
+        shadowed.append((t, path, runs))
+    if not shadowed:
+        return
+    print("  NOTE: these tools are also on your PATH outside PhageTAILor's environments:\n")
+    for t, path, runs in shadowed:
+        flag = "" if runs else "   <-- killed by macOS Gatekeeper (unsigned binary)"
+        print(f"    {t:<14} {path}{flag}")
+    print("""
+  PhageTAILor installs its own pinned copies in per-rule conda environments.
+  If your shell profile prepends the directory above, it can take precedence
+  over Snakemake's activation and the rule will use that copy instead. A build
+  macOS refuses to run appears as a killed job (exit 137); one that does run is
+  more dangerous, because results will look fine while not matching the pinned
+  versions.
+
+  If a run fails oddly, or you want to be certain of the versions used, move the
+  shadowing copy aside, e.g.:
+      sudo mkdir -p /usr/local/bin/_disabled
+      sudo mv /usr/local/bin/hmmsearch /usr/local/bin/_disabled/
+""")
 
 def cmd_explain(args):
     step = args.step.lower()
