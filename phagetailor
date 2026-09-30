@@ -470,9 +470,21 @@ def cmd_run(args):
         cmd.append("-n")
         print("(dry-run mode — not actually running, just listing what would run)\n", flush=True)
     print(f"  command: {' '.join(cmd)}\n", flush=True)
+    if args.unlock:
+        print("  Releasing the stale lock on the working directory ...\n", flush=True)
+        subprocess.run(cmd + ["--unlock"])
+        print("  Unlocked. Re-run your original command to continue.\n", flush=True)
+        return
     r = subprocess.run(cmd)
     if r.returncode != 0:
-        die(f"snakemake exited with non-zero status {r.returncode}. See the log lines above. For help, run `phagetailor explain <step>` for the failing step.")
+        hint = ""
+        lock = THIS_DIR / ".snakemake" / "locks"
+        if lock.exists() and any(lock.iterdir()):
+            hint = ("\n  This looks like a stale lock left by an interrupted run.\n"
+                    "  Release it with:  phagetailor run <same arguments> --unlock\n"
+                    "  then re-run your original command.")
+        die(f"snakemake exited with non-zero status {r.returncode}. See the log lines above. "
+            f"For help, run `phagetailor explain <step>` for the failing step.{hint}")
     print(f"\n  DONE. Results in: {out}", flush=True)
     mods = args.modules
     runs_classifier = mods == "all" or any(m in mods.split(",") for m in ("report", "classify"))
@@ -628,6 +640,8 @@ def main():
     p_run.add_argument("--no-use-conda", dest="use_conda", action="store_false",
                        help="do not use conda envs; requires every tool already on PATH")
     p_run.add_argument("--dry-run", action="store_true", help="show what would run without running it")
+    p_run.add_argument("--unlock", action="store_true",
+                       help="release a stale lock left by an interrupted run, then exit")
     p_run.set_defaults(func=cmd_run)
 
     p_check = sub.add_parser("check", help="verify all required tools and databases are installed")
