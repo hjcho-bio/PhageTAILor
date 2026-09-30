@@ -8,3 +8,9 @@ dependencies:
   - pyrodigal=3.6.3
   - mmseqs2=14.7e284
   - hmmer=3.4
+  # pyrodigal-gv 0.3.2 imports importlib.resources.files, which exists only
+  # from python 3.9. On this pinned 3.8 it falls back to the importlib_resources
+  # backport, which its conda recipe does not declare -- so without this the
+  # tool cannot even start:
+  #   ModuleNotFoundError: No module named 'importlib_resources'
+  - importlib_resources
