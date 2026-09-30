@@ -190,8 +190,15 @@ candidates pending experimental follow-up.
 - **Linux (x86-64).** GTDB-Tk has no macOS conda build, so the taxonomy step
   cannot run natively on a Mac. On Apple Silicon use a Linux container or a
   remote Linux host. Everything else in the pipeline is cross-platform.
-- **conda** (miniforge/mambaforge recommended) and ~15 GB of free disk for the
-  reference databases.
+- **conda** (miniforge/mambaforge recommended).
+- **Disk.** ~15 GB for the databases this repo installs (geNomad ~5 GB,
+  training sketch ~4 GB, tail-HMM + PHROGS ~1 GB), plus space for the conda
+  environments.
+- **GTDB-Tk reference data**, if you want the taxonomy step. This is *not*
+  installed by our scripts and is large (~110 GB for GTDB R220). Follow the
+  [GTDB-Tk instructions](https://ecogenomics.github.io/GTDBTk/installing/index.html)
+  and set `gtdbtk_db` in `config/config.yaml`. Without it, run the modules that
+  do not need taxonomy, e.g. `--modules annotation,phage`.
 
 ### Steps
 
@@ -204,7 +211,8 @@ cd PhageTAILor
 conda create -n phagetailor -c conda-forge -c bioconda snakemake
 conda activate phagetailor
 
-# 3. geNomad reference DB (one-time, ~5 GB)
+# 3. geNomad reference DB (one-time, ~1.5 GB download / ~5 GB on disk)
+#    Builds a temporary conda env for geNomad if you don't have it.
 bash scripts/setup_genomad_db.sh
 
 # 4. PhageTAILor reference DBs -- tail-HMM, PHROGS, training sketch

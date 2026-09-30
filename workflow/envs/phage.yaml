@@ -1,8 +1,14 @@
-# Exact versions as used (conda env: mvip, python 3.8.19)
+# geNomad 1.12.0 with the v1.9 database (the pairing geNomad itself ships).
+# Python is 3.11 here because geNomad >=1.11 requires python >=3.9, keras >=3
+# and tensorflow >=2.16. This is a per-rule env, so its Python version is
+# independent of every other env in the pipeline.
+#
+# The paper's as-run results used genomad 1.7.4 on python 3.8.19; that pairing
+# still solves, but pins a database version no longer distributed.
 channels:
   - conda-forge   # must precede bioconda (bioconda's documented order)
   - bioconda
 dependencies:
-  - python=3.8.19
-  - genomad=1.7.4
+  - python=3.11
+  - genomad=1.12.0
   - checkv=1.0.3
