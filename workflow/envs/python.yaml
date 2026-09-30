@@ -1,16 +1,17 @@
-# Exact versions as used (conda env: mvip, python 3.8.19).
-# The data-science stack was installed via pip in the as-run env; pinned here
-# under pip, so the exact versions resolve on python 3.8 (pyarrow 17 has no
-# python-3.8 conda-forge build).
+# Data-science stack for feature assembly, classification and reporting.
+#
+# All versions are the as-run ones from the paper, installed from conda-forge.
+# They were previously installed via pip, on the belief that pyarrow 17 had no
+# python-3.8 conda-forge build; it does. The pip route made this env unbuildable
+# on Apple Silicon, where lightgbm 3.3.5 has no arm64 wheel, so pip fell back to
+# compiling from source and failed on a missing CMake.
 channels:
   - conda-forge
 dependencies:
   - python=3.8.19
-  - pip
-  - pip:
-    - numpy==1.24.4
-    - pandas==2.0.3
-    - scikit-learn==1.3.2
-    - lightgbm==3.3.5
-    - pyarrow==17.0.0
-    - jinja2==3.1.4
+  - numpy=1.24.4
+  - pandas=2.0.3
+  - scikit-learn=1.3.2
+  - lightgbm=3.3.5
+  - pyarrow=17.0.0
+  - jinja2=3.1.4
