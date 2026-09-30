@@ -31,16 +31,22 @@ jobs:
       - name: Every URL in the README and setup scripts resolves
         run: |
           fail=0
-          urls=$(grep -rhoE 'https://[a-zA-Z0-9./_-]+' README.md scripts/*.sh \
-                 | sed 's/[.,)]*$//' | sort -u)
-          for u in $urls; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' -L --max-time 25 "$u" || echo 000)
-            case "$code" in
-              2*|3*) echo "ok   $code  $u" ;;
-              *)     echo "DEAD $code  $u"; fail=1 ;;
-            esac
-          done
-          exit $fail
+          # Fetch only the first byte: these targets include multi-GB tarballs,
+          # and a full GET would time out rather than test reachability.
+          # Skip bare base/prefix URLs, which are string-built and never resolve alone.
+          grep -rhoE 'https://[a-zA-Z0-9./_-]+' README.md scripts/*.sh \
+            | sed 's/[.,)]*$//' | sort -u \
+          | while IFS= read -r u; do
+              case "$u" in
+                */records/*/files) echo "skip ---  $u  (base prefix)"; continue ;;
+              esac
+              code=$(curl -s -o /dev/null -w '%{http_code}' -L --max-time 30 -r 0-0 "$u" || echo 000)
+              case "$code" in
+                2*|3*) echo "ok   $code  $u" ;;
+                *)     echo "DEAD $code  $u"; echo "$u" >> /tmp/dead ;;
+              esac
+            done
+          if [ -s /tmp/dead ]; then echo "::error::dead URLs found"; cat /tmp/dead; exit 1; fi
 
       - uses: conda-incubator/setup-miniconda@v3
         with:
